@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+
+# Node / build
+node_modules/
+.dist/
+
+# Local dev scratch (committed store lives at data/; pages serve from docs/)
+.venv/
+*.db-journal

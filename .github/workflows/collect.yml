@@ -1,0 +1,38 @@
+name: Collect market snapshot
+
+on:
+  schedule:
+    - cron: "4,24,44 * * * *"   # ~every 20 min (game refreshes on a ~20 min rhythm)
+  workflow_dispatch:
+
+permissions:
+  contents: write   # commit data/market.db back to main
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0   # full history so we can push back
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Ingest latest snapshot
+        run: python ingest.py data/market.db
+
+      - name: Commit market.db if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --ff-only origin HEAD || { echo "non-fast-forward; will retry next cycle"; exit 0; }
+          git add data/market.db
+          if git diff --quiet --cached; then
+            echo "No new snapshot; nothing to commit."
+          else
+            git commit -q -m "chore: ingest market snapshot (auto)"
+            git push
+          fi

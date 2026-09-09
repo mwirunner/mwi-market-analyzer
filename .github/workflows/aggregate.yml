@@ -1,0 +1,41 @@
+name: Aggregate static data
+
+on:
+  schedule:
+    - cron: "3 5 * * *"   # daily, a few hours into the UTC day
+  workflow_dispatch:
+
+permissions:
+  contents: write   # commit regenerated docs/data/* back to main
+
+jobs:
+  aggregate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0   # full history so we can push back
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compact the database (daily VACUUM)
+        run: python3 -c "import sqlite3;c=sqlite3.connect('data/market.db');c.execute('VACUUM');c.commit();c.close()"
+
+      - name: Rebuild static index + history files
+        run: python build_indexes.py data/market.db docs/data
+
+      - name: Commit generated data if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --ff-only origin HEAD || { echo "non-fast-forward; will retry next cycle"; exit 0; }
+          git add docs/data/index.json docs/data/history
+          if git diff --quiet --cached; then
+            echo "No data changes; nothing to commit."
+          else
+            git commit -q -m "chore: rebuild static data (auto)"
+            git push
+          fi
