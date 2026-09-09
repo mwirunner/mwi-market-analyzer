@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0   # full history so we can push back
 
       - uses: actions/setup-python@v5
@@ -26,6 +26,9 @@ jobs:
 
       - name: Rebuild static index + history files
         run: python build_indexes.py data/market.db docs/data
+
+      - name: Authenticate the push (GITHUB_TOKEN on the remote URL)
+        run: git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
 
       - name: Commit generated data if changed
         run: |
