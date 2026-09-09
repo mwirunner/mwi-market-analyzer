@@ -1,5 +1,10 @@
 // MWI Market Analyzer — frontend
-// HTMX: loads index.json + per-item history JSON (no swap; parsed in afterRequest).
+// HTMX: declaratively loads data/index.json at startup; the response arrives
+//       via `htmx:afterRequest` (dispatched on the #boot element, which is in
+//       the DOM, so it bubbles to document.body).
+// fetch(): per-item history is loaded on demand with a plain fetch (programmatic
+//       htmx.ajax calls dispatch afterRequest on a detached element, which would
+//       not bubble — so fetch is used here instead).
 // Chart.js: renders selected items as price-over-time lines (no animations, no clutter).
 //
 // Data contract:
@@ -16,32 +21,24 @@ const STATE = {
 
 const el = (id) => document.getElementById(id);
 
-/* ---------- index loading (HTMX afterRequest) ---------- */
+/* ---------- index loading (HTMX afterRequest on the #boot element) ---------- */
 
-function onHtmxResponse(xhr) {
-  if (!xhr || !xhr.responseText) return;
-  const url = xhr.responseURL || "";
-  try {
-    if (url.endsWith("/index.json")) {
+document.addEventListener("DOMContentLoaded", () => {
+  document.body.addEventListener("htmx:afterRequest", (e) => {
+    const xhr = e.detail?.xhr;
+    if (!xhr || !xhr.responseText) return;
+    const url = xhr.responseURL || "";
+    if (!url.endsWith("/index.json")) return;
+    try {
       STATE.items = JSON.parse(xhr.responseText);
       STATE.items.forEach((it) => STATE.bySlug.set(it.slug, it));
       populateDatalist();
-      const st = el("status");
-      st.textContent = `Loaded ${STATE.items.length} items. Select one to plot.`;
-    } else if (/\/history\/.+\.json$/.test(url)) {
-      const slug = decodeURIComponent(url.replace(/^.*\/history\/(.+)\.json$/, "$1"));
-      const data = JSON.parse(xhr.responseText);
-      STATE.history.set(slug, data);
-      renderChips();
-      renderChart();
+      el("status").textContent = `Loaded ${STATE.items.length} items. Select one to plot.`;
+    } catch (err) {
+      el("status").textContent = "Failed to load item list.";
+      console.error(err);
     }
-  } catch (e) {
-    console.error("parse failed for", url, e);
-  }
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-  document.body.addEventListener("htmx:afterRequest", (e) => onHtmxResponse(e.detail?.xhr));
+  });
   el("q").addEventListener("change", onInputChange);
 });
 
@@ -75,15 +72,25 @@ function selectItem(slug) {
   if (STATE.selected.includes(slug)) return;
   STATE.selected.push(slug);
   renderChips();
-  renderChart();
-  if (!STATE.history.has(slug)) {
-    fetchHistory(slug);
-  }
+  renderChart(); // draws an empty dataset until the history arrives
+  if (!STATE.history.has(slug)) fetchHistory(slug);
 }
 
 function fetchHistory(slug) {
   const url = `data/history/${encodeURIComponent(slug)}.json`;
-  htmx.ajax("GET", url, { swap: "none", target: "#chart-wrap" });
+  fetch(url)
+    .then((r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    })
+    .then((data) => {
+      STATE.history.set(slug, data);
+      renderChart();
+    })
+    .catch((err) => {
+      el("status").textContent = `Failed to load ${STATE.bySlug.get(slug)?.name || slug}: ${err.message}`;
+      console.error(err);
+    });
 }
 
 function removeItem(slug) {
@@ -96,7 +103,7 @@ function removeItem(slug) {
 function renderChips() {
   const box = el("selected");
   box.replaceChildren();
-  STATE.selected.forEach((slug, i) => {
+  STATE.selected.forEach((slug) => {
     const name = STATE.history.get(slug)?.name || STATE.bySlug.get(slug)?.name || slug;
     const chip = document.createElement("span");
     chip.className = "chip";
@@ -165,7 +172,7 @@ function renderChart() {
     };
   });
   const emptyNote = el("empty");
-  emptyNote.style.display = STATE.selected.length ? "none" : "";
+  if (emptyNote) emptyNote.style.display = STATE.selected.length ? "none" : "";
 
   if (window.CHART) {
     window.CHART.data.datasets = datasets;
