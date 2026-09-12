@@ -1,44 +1,65 @@
 // MWI Market Analyzer — frontend
-// HTMX: declaratively loads data/index.json at startup; the response arrives
-//       via `htmx:afterRequest` (dispatched on the #boot element, which is in
-//       the DOM, so it bubbles to document.body).
-// fetch(): per-item history is loaded on demand with a plain fetch (programmatic
-//       htmx.ajax calls dispatch afterRequest on a detached element, which would
-//       not bubble — so fetch is used here instead).
+// HTMX: loads index.json on startup (via #boot div, hx-get, hx-trigger="load", hx-swap="none").
+// fetch(): loads per-item history JSON (plain fetch, no htmx needed).
 // Chart.js: renders selected items as price-over-time lines (no animations, no clutter).
 //
 // Data contract:
 //   data/index.json            -> [{ slug, name }, ...]
 //   data/history/<slug>.json   -> { name, grades: { "<grade>": [[ts,ask,bid,price,vol], ...] } }
-//   Each row: ts(unix s), ask, bid, price, volume. Null = absent/-1 in the API.
+//
+// HTML structure (in index.html):
+//   <div id="boot" hx-get="data/index.json" hx-trigger="load" hx-swap="none"></div>  ← HTMX boot
+//   <input id="q" list="items" …>  ← autocomplete
+//   <canvas id="chart" height="300"></canvas>  ← Chart.js renders here
+//
+// Data contract:
+//   data/index.json            -> [{ slug, name }, ...]
+//   data/history/<slug>.json   -> { name, grades: { "<grade>": [[ts,ask,bid,price,vol], …] } }
+//
+// ---------- STATE & DOM elements ----------
 
 const STATE = {
-  items: [],          // [{slug,name}] sorted
+  items: [],          // [{slug,name}] sorted by name
   bySlug: new Map(),  // slug -> {slug,name}
   history: new Map(), // slug -> history json
   selected: [],       // slugs currently drawn, in selection order
 };
 
 const el = (id) => document.getElementById(id);
+const STATE_KEY = "mwi-market-analyzer-state";
 
-/* ---------- index loading (HTMX afterRequest on the #boot element) ---------- */
+// Load STATE from localStorage if present
+if (localStorage.getItem(STATE_KEY)) {
+  const stored = JSON.parse(localStorage.getItem(STATE_KEY));
+  Object.assign(STATE, stored);
+}
 
-document.addEventListener("DOMContentLoaded", () => {
-  document.body.addEventListener("htmx:afterRequest", (e) => {
-    const xhr = e.detail?.xhr;
-    if (!xhr || !xhr.responseText) return;
-    const url = xhr.responseURL || "";
-    if (!url.endsWith("/index.json")) return;
-    try {
+// Persist STATE on every change
+function persistState() {
+  localStorage.setItem(STATE_KEY, JSON.stringify(STATE));
+}
+
+// ---------- index loading (HTMX afterRequest) ----------
+
+function onHtmxResponse(xhr) {
+  if (!xhr || !xhr.responseText) return;
+  const url = xhr.responseURL || "";
+  try {
+    if (url.endsWith("/index.json")) {
       STATE.items = JSON.parse(xhr.responseText);
       STATE.items.forEach((it) => STATE.bySlug.set(it.slug, it));
       populateDatalist();
       el("status").textContent = `Loaded ${STATE.items.length} items. Select one to plot.`;
-    } catch (err) {
-      el("status").textContent = "Failed to load item list.";
-      console.error(err);
+    } else if (/\/history\/.+\.json$/.test(url)) {
+      // history fetch — handled inline below (via fetch() in selectItem)
     }
-  });
+  } catch (e) {
+    console.error("parse failed for", url, e);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.body.addEventListener("htmx:afterRequest", onHtmxResponse);
   el("q").addEventListener("change", onInputChange);
 });
 
@@ -59,7 +80,7 @@ function onInputChange() {
   const input = el("q");
   const name = input.value.trim();
   if (!name) return;
-  const match = STATE.items.find((it) => it.name.toLowerCase() === name.toLowerCase());
+  const match = STATE.items.find((it) => it.name.toLowerCase() === name.toCaseInsensitiveMatch(name));
   if (!match) {
     input.value = "";
     return;
@@ -72,7 +93,7 @@ function selectItem(slug) {
   if (STATE.selected.includes(slug)) return;
   STATE.selected.push(slug);
   renderChips();
-  renderChart(); // draws an empty dataset until the history arrives
+  renderChart();
   if (!STATE.history.has(slug)) fetchHistory(slug);
 }
 
@@ -86,10 +107,10 @@ function fetchHistory(slug) {
     .then((data) => {
       STATE.history.set(slug, data);
       renderChart();
+      renderChips();
     })
-    .catch((err) => {
-      el("status").textContent = `Failed to load ${STATE.bySlug.get(slug)?.name || slug}: ${err.message}`;
-      console.error(err);
+    .catch((e) => {
+      el("status").textContent = `Failed to load ${el("q").value}: ${e.message}`;
     });
 }
 
@@ -103,7 +124,7 @@ function removeItem(slug) {
 function renderChips() {
   const box = el("selected");
   box.replaceChildren();
-  STATE.selected.forEach((slug) => {
+  STATE.selected.forEach((slug, i) => {
     const name = STATE.history.get(slug)?.name || STATE.bySlug.get(slug)?.name || slug;
     const chip = document.createElement("span");
     chip.className = "chip";
@@ -159,8 +180,8 @@ function renderChart() {
   const datasets = STATE.selected.map((slug, i) => {
     const hist = STATE.history.get(slug);
     return {
-      label: hist?.name || STATE.bySlug.get(slug)?.name || slug,
-      data: hist ? pricePoints(hist) : [],
+      label: STATE.history.get(slug)?.name || STATE.bySlug.get(slug)?.name || slug,
+      data: STATE.history.has(slug) ? pricePoints(STATE.history.get(slug)) : [],
       borderColor: color(i),
       backgroundColor: "transparent",
       borderJoinStyle: "round",
@@ -178,7 +199,7 @@ function renderChart() {
     window.CHART.data.datasets = datasets;
     window.CHART.update("none"); // no re-render animation
   } else {
-    window.CHART = new Chart(ctx, {
+    window.CHART = new Chart(el("chart"), {
       type: "line",
       data: { datasets },
       options: {
@@ -215,7 +236,5 @@ function renderChart() {
             ticks: { callback: (v) => fmt(v) },
           },
         },
-      },
-    });
-  }
+      });
 }

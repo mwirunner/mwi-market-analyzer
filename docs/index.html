@@ -12,11 +12,11 @@
 <body>
   <header>
     <h1>MWI Market Analyzer</h1>
-    <p class="sub">Price history for Milky Way Idle marketplace items.</p>
+    <p class="sub">Price history for Milky Way Idle items.</p>
   </header>
 
   <main>
-    <section class="search">
+    <section class="left-panel">
       <label for="q">Search item:</label>
       <input id="q" list="items" placeholder="start typing… pick one to add" autocomplete="off">
       <datalist id="items"></datalist>
@@ -24,11 +24,19 @@
       <p id="status" class="status">Loading item list…</p>
     </section>
 
-    <section class="chart">
-      <canvas id="chart" height="360" aria-label="price chart"></canvas>
-      <p id="empty" class="empty">No items selected. Pick one above to plot it.</p>
+    <section class="middle">
+      <section class="chart">
+        <canvas id="chart" height="300" aria-label="price chart"></canvas>
+        <p id="empty" class="empty">No items selected. Pick one above to plot it.</p>
+      </section>
+      <section class="details">
+        <div id="detail-pane">
+          <p>Select an item to show its price history.</p>
+        </div>
+      </section>
     </section>
   </main>
+</body>
 
   <!-- Auto-load the item index on startup (HTMX fires afterRequest on completion) -->
   <div id="boot" hx-get="data/index.json" hx-trigger="load" hx-swap="none"></div>
